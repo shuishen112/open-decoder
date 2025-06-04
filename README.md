@@ -1,5 +1,9 @@
 # Phoenix-II-Dev
 
+
+## Running environment. 
+
+
 ## Code Usage
 
 1. we need to download the Qwen model to the current path. For example ./Qwen2.5-1.5B-Instruct. 
@@ -25,7 +29,6 @@
 - src: source code
     - dataset: Data input and processing logic and dialogue template
     - model: modified modeling.py with suffixes correspond to the experimental setup above
-    - trainier.py: Reserve the interface in case modifying the training logic
     - train.py: Main script
 - utils: some functional scripts (compress/initialize/download model)
 - train.sh: training scripts
