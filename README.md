@@ -1,4 +1,4 @@
-# Phoenix-II-Dev
+# Open Decoder RAG
 
 
 ## Running environment. 
