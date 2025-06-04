@@ -32,3 +32,11 @@
     - train.py: Main script
 - utils: some functional scripts (compress/initialize/download model)
 - train.sh: training scripts
+
+
+
+## Todo List
+
+- [x] add relevant scores in the forward pass
+- [ ] change the layer index to make sure only update the final layer. 
+- [ ] change the datasets to QA pairs. 
