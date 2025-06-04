@@ -1,16 +1,10 @@
 #!/bin/bash
 
 
-
-# conda env set up
-# source /sds_wangby/group_conda_envs/init.sh
-# conda activate fapy310
-
 experiment_name=Qwen2.5-1.5B-Instruct_dense
 model_path=Qwen2.5-1.5B-Instruct-local
-config_path=./src/model/phoenix11/final_config.json
-# dir_name under src/model for modeling and config [phoenix11, phoenix11moe, phoenix12, phoenix12moe]
-model_pattern=phoenix11
+config_path=./src/model/qwen_decoder/final_config.json
+model_pattern=qwen_decoder
 savedir_imodel=./baseModels/doNotUpload/${experiment_name}
 src_path=./src
 savepath_basemodel_namemodules=./utils/initModel/namemodules/basemodel.txt

@@ -1,24 +1,11 @@
 #!/bin/bash
-# conda env set up
-# source /sds_wangby/group_conda_envs/init.sh
-# conda activate fapy310
-
-# DEBUG FLAG
-# export TORCH_DISTRIBUTED_DEBUG=DETAIL
-# export TRANSFORMERS_VERBOSITY=debug
-
-# WANDB set uo
-export WANDB_API_KEY=""
 
 
-# Single Node Training of modified model 
-# Add --is_base True if training base model
-# --save_safetensors False for modified model architechure
 experiment_name=qwen_dense # NameWay: PATTERN_BaseModel_LoopNum_Arch
-WANDB_PROJECT=$experiment_name
+WANDB_PROJECT=$experiment_name  # project name in wandb
 MODEL_PATH=baseModels/doNotUpload/Qwen2.5-1.5B-Instruct_dense
 DATA_PATH=./data/Train/General.json
-MODEL_PATTERN=phoenix11 # directory name under src/model [phoenix11, phoenix11moe, phoenix12, phoenix12moe]
+MODEL_PATTERN=phoenix11 # directory name under src/model [phoenix11, phoenix11moe, phoenix12, phoenix12moe] 
 src_path=./src
 log_folder="./logs/${experiment_name}"
 mkdir -p $log_folder
