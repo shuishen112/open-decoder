@@ -1,24 +1,5 @@
 # Phoenix-II-Dev
 
-## Experiments Pipeline And Conclusion
-1. LoopW Ablation on Qwen2.5-A2.7B with FullModelLoop
-    - LoopW: LayerNorm LoopNum:3
-        - 1.1 w/o LoopW 
-            - **MoELoop enable adaptive routing and lower loss than base. DenseLoop's loss is higher.**
-        - 1.2 EveryLoop EveryLayer with Replace Block (Redefine QwenDecoder Layer with sparse model)
-            - **LayerNorm+Attention with lowest loss.**
-        - 1.3 w/ LoopW EveryLoop with New Block (Only Train LoopW / Full parameter)
-            - a. Layer Embedding
-            - b. PromptTuning (With N-token Prediction Block)
-    - Dataset: General + DataForMath
-    - Benchmark: MMLU-Pro, MMLU, BBH, GPOA, MATH
-2. DownCycling Trick & FabricModelLoop Ablation
-3. Weighted Pretrain Loss with Large Batch Pilot Study
-4. Scale Up to Larger Models And Efficiency Check About New Architechure
-5. Pretrain Parralell Strategy Pilot Study
-6. Every Item About Code Checked! Start Baking Models!
-
-
 ## Code Usage
 
 MODEL_PATTERN (directory name under src/model)
