@@ -5,7 +5,7 @@ experiment_name=qwen_dense # NameWay: PATTERN_BaseModel_LoopNum_Arch
 WANDB_PROJECT=$experiment_name  # project name in wandb
 MODEL_PATH=baseModels/doNotUpload/Qwen2.5-1.5B-Instruct_dense
 DATA_PATH=./data/Train/General.json
-MODEL_PATTERN=phoenix11 # directory name under src/model [phoenix11, phoenix11moe, phoenix12, phoenix12moe] 
+MODEL_PATTERN=qwen_decoder # the path to the model in src/model
 src_path=./src
 log_folder="./logs/${experiment_name}"
 mkdir -p $log_folder
