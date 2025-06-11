@@ -119,7 +119,7 @@ def eager_attention_forward(
     if kwargs.get("relevant_scores", None) is not None:
         relevant_scores = kwargs["relevant_scores"].unsqueeze(1).unsqueeze(1)
         # normalize relevant scores
-        relevant_scores = relevant_scores / relevant_scores.sum(dim=-1, keepdim=True)
+        relevant_scores = relevant_scores / relevant_scores.sum(dim=-1, keepdim=True).to(attn_weights.dtype)
         attn_weights = attn_weights * relevant_scores
 
     attn_output = torch.matmul(attn_weights, value_states)
@@ -465,7 +465,6 @@ QWEN2_INPUTS_DOCSTRING = r"""
             this tensor is not affected by padding. It is used to update the cache in the correct position and to infer
             the complete sequence length.
 """
-# class LoopW():
 
 @add_start_docstrings(
     "The bare Qwen2 Model outputting raw hidden-states without any specific head on top.",
