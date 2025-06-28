@@ -22,6 +22,14 @@
     bash train.sh 
     ```
 
+5. DPO training of the model 
+
+    ```
+    # Remember to adjust Arguments
+    bash train_dpo.sh 
+    ```
+
+
 
 ## Code Architechure
 
@@ -38,6 +46,7 @@
 ## Todo List
 
 - [x] add relevant scores in the forward pass
+- [x] add dpo training
 
 please refer to the code in the 
 
@@ -78,5 +87,3 @@ def eager_attention_forward(
     return attn_output, attn_weights
 ```
 
-- [ ] change the layer index to make sure only update the final layer. 
-- [ ] change the datasets to QA pairs. 
