@@ -30,26 +30,21 @@ import importlib
 
 
 def load_imodel_and_iconfig_package(model_pattern, src_path):
-    # 动态构建模型路径
     model_path = os.path.join(src_path, "model")
 
-    # 判断路径是否存在
     if not os.path.exists(model_path):
         print(f"路径不存在: {model_path}")
         return None, None
 
-    # 将该路径添加到 sys.path 中，确保 Python 可以找到这些模块
     if model_path not in sys.path:
         sys.path.append(model_path)
 
-    # 动态导入模型和配置模块
     try:
-        # 动态导入模型
         IModelForCausalLM = importlib.import_module(
             f"{model_pattern}.modeling"
         ).IModelForCausalLM
         IConfig = importlib.import_module(f"{model_pattern}.configuration").IConfig
-        # 返回导入的类
+
         return IModelForCausalLM, IConfig
     except ModuleNotFoundError as e:
         print(f"模块加载失败: {e}")
