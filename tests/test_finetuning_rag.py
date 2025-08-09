@@ -1,13 +1,10 @@
+from huggingface_hub.inference._generated.types import text_to_speech
 from transformers import AutoTokenizer, AutoModelForCausalLM, Trainer, TrainingArguments
 from transformers import DefaultDataCollator
 from peft import LoraConfig, get_peft_model, TaskType
 from datasets import load_dataset
 from torch.utils.data import Dataset
 import torch
-
-THINK_TAG = "<|im_start|>think"
-ANSWER_TAG = "<|im_start|>answer"
-END_TAG = "<|im_end|>"
 
 
 class S1Dataset(Dataset):
@@ -19,29 +16,24 @@ class S1Dataset(Dataset):
     def __getitem__(self, index):
         sample = self.ds[index]
         question = sample["question"]
-        gemini_thinking_trajectory = sample["gemini_thinking_trajectory"]
-        gemini_attempt = sample["gemini_attempt"]
-
-        q = self.tokenizer.apply_chat_template(
-            [{"role": "user", "content": question}],
+        answer = sample["answer"]
+      
+        text = self.tokenizer.apply_chat_template(
+            [{"role": "user", "content": question}, {"role": "assistant", "content": answer}],
             tokenize=False,
-            add_generation_prompt=True,
-        )
-        a = (
-            THINK_TAG
-            + gemini_thinking_trajectory
-            + ANSWER_TAG
-            + gemini_attempt
-            + END_TAG
+            add_generation_prompt=False,
         )
 
-        q_input_ids = self.tokenizer.encode(q)
-        a_input_ids = self.tokenizer.encode(a)
+        question = text.split("<|im_start|>assistant")[0]
+        answer = "<|im_start|>assistant\n" + text.split("<|im_start|>assistant")[1]
+
+        q_input_ids = self.tokenizer.encode(question)
+        a_input_ids = self.tokenizer.encode(answer)
 
         input_ids = q_input_ids + a_input_ids
-        # print the length of input_ids
         attention_mask = [1] * len(input_ids)
         labels = [-100] * len(q_input_ids) + a_input_ids
+
 
         if len(input_ids) > self.max_length:
             input_ids = input_ids[: self.max_length]
@@ -85,18 +77,19 @@ if __name__ == "__main__":
         ],
     )
 
-    # model = get_peft_model(model, lora_config)
-    # model.print_trainable_parameters()
+    model = get_peft_model(model, lora_config)
+    model.print_trainable_parameters()
 
-    ds = load_dataset("simplescaling/s1K-1.1")
+    ds = load_dataset("rag-datasets/rag-mini-wikipedia","question-answer")
+    ds = ds['test']
     data_collator = DefaultDataCollator()
 
     args = TrainingArguments(
         output_dir="./s1",
-        learning_rate=1e-5,
+        learning_rate=1e-4,
         per_device_train_batch_size=2,
         gradient_accumulation_steps=4,
-        num_train_epochs=1,
+        num_train_epochs=2,
         weight_decay=0.01,
         logging_steps=10,
         save_strategy="steps",
@@ -106,7 +99,7 @@ if __name__ == "__main__":
         report_to="tensorboard",
     )
 
-    train_dataset = S1Dataset(ds["train"], tokenizer, max_length=1024)
+    train_dataset = S1Dataset(ds, tokenizer, max_length=252)
     trainer = Trainer(
         model=model,
         args=args,
@@ -121,6 +114,12 @@ if __name__ == "__main__":
 
     #inference
 
-    inputs = tokenizer("Given a rational number, write it as a fraction in lowest terms and calculate the product of the resulting numerator and denominator. For how many rational numbers between 0 and 1 will $20_{}^{}!$ be the resulting product?", return_tensors="pt")
+    question = tokenizer.apply_chat_template(
+        [{"role": "user", "content": "What happened in 1833?"}],
+        tokenize=False,
+        add_generation_prompt=False,
+    )
+
+    inputs = tokenizer(question, return_tensors="pt")
     outputs = model.generate(**inputs.to(device), max_new_tokens=50)
     print(tokenizer.decode(outputs[0], skip_special_tokens=True))
