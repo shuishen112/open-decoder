@@ -47,7 +47,7 @@ from torch.utils.data import Dataset
 from torch.utils.data import Subset
 import os
 
-os.environ["WANDB_DISABLED"] = 0
+os.environ["WANDB_DISABLED"] = "0"
 
 SEP = "</s>"  # separator token for concatenating passages (works for most tokenizers)
 
