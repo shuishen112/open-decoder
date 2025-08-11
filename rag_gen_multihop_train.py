@@ -38,10 +38,12 @@ import evaluate
 from transformers import (
     AutoTokenizer,
     AutoModelForSeq2SeqLM,
+    AutoModelForCausalLM,
     Seq2SeqTrainingArguments,
     Seq2SeqTrainer,
     DataCollatorForSeq2Seq,
     HfArgumentParser,
+    DataCollatorWithPadding
 )
 from torch.utils.data import Dataset
 from torch.utils.data import Subset
@@ -109,6 +111,81 @@ class MultiHopDataset(Dataset):
         return model_inputs
 
 
+class MultiHopCausalDataset(Dataset):
+    def __init__(self, path: str, tokenizer, max_length=1024, concat_fn=None):
+        self.examples = []
+        self.tokenizer = tokenizer
+        self.max_length = max_length
+        self.concat_fn = concat_fn if concat_fn is not None else self.default_concat
+
+        with open(path, "r", encoding="utf-8") as f:
+            for line in f:
+                obj = json.loads(line)
+                q = obj.get("question") or obj.get("query")
+                contexts = obj.get("contexts") or obj.get("passages") or []
+                answer = obj.get("answer") or obj.get("answers") or ""
+                _id = obj.get("id")
+                if q is None:
+                    continue
+                # concat question, contexts, and answer
+                input_text = self.concat_fn(q, contexts, answer)
+                self.examples.append({"id": _id, "text": input_text})
+
+    def default_concat(self, question, contexts, answer):
+        # concat: Question + SEP + Contexts + SEP + Answer
+        parts = [question.strip()]
+        for p in contexts:
+            if p:
+                parts.append(SEP)
+                parts.append(p.strip())
+        parts.append(SEP)
+        parts.append(answer.strip())
+        return " \n ".join(parts)
+
+    def __len__(self):
+        return len(self.examples)
+
+    def __getitem__(self, idx):
+        ex = self.examples[idx]
+        enc = self.tokenizer(
+            ex["text"],
+            truncation=True,
+            max_length=self.max_length,
+            return_tensors=None,
+        )
+        input_ids = enc["input_ids"]
+
+        # generate labels, shift right by one, and pad with pad_token_id
+        labels = input_ids[1:] + [self.tokenizer.pad_token_id]
+
+        return {
+            "input_ids": input_ids,
+            "labels": labels,
+        }
+
+def get_qwen_data_collator(tokenizer):
+    def qwen_data_collator(features):
+        input_ids = [f["input_ids"] for f in features]
+        labels = [f["labels"] for f in features]
+
+        batch_inputs = tokenizer.pad(
+            {"input_ids": input_ids},
+            padding=True,
+            return_tensors="pt",
+        )
+        batch_labels = tokenizer.pad(
+            {"input_ids": labels},
+            padding=True,
+            return_tensors="pt",
+        )
+
+        batch = {
+            "input_ids": batch_inputs["input_ids"],
+            "attention_mask": batch_inputs["attention_mask"],
+            "labels": batch_labels["input_ids"],
+        }
+        return batch
+    return qwen_data_collator
 def normalize_answer(s: str) -> str:
     import re
     s = s.lower()
@@ -162,7 +239,7 @@ def make_argparser():
     parser = argparse.ArgumentParser(description="Train generator-only RAG for multi-hop QA")
     parser.add_argument("--train_file", type=str, required=True)
     parser.add_argument("--validation_file", type=str, required=True)
-    parser.add_argument("--model_name_or_path", type=str, default="t5-base")
+    parser.add_argument("--model_name_or_path", type=str, default="Qwen/Qwen2.5-1.5B")
     parser.add_argument("--output_dir", type=str, default="outputs/rag_gen")
     parser.add_argument("--per_device_train_batch_size", type=int, default=8)
     parser.add_argument("--per_device_eval_batch_size", type=int, default=8)
@@ -175,6 +252,7 @@ def make_argparser():
     parser.add_argument("--logging_steps", type=int, default=100)
     parser.add_argument("--save_total_limit", type=int, default=3)
     parser.add_argument("--fp16", action="store_true")
+    parser.add_argument("--eval_steps", type=int, default=500)
     return parser
 
 
@@ -183,17 +261,19 @@ def main():
     args = parser.parse_args()
 
     tokenizer = AutoTokenizer.from_pretrained(args.model_name_or_path)
-    model = AutoModelForSeq2SeqLM.from_pretrained(args.model_name_or_path).to("cuda")
 
-    train_dataset = MultiHopDataset(args.train_file, tokenizer, args.max_source_length, args.max_target_length)
-    eval_dataset = MultiHopDataset(args.validation_file, tokenizer, args.max_source_length, args.max_target_length)
+    # model = AutoModelForSeq2SeqLM.from_pretrained(args.model_name_or_path).to("cuda")
+    model = AutoModelForCausalLM.from_pretrained(args.model_name_or_path).to("cuda")
+
+    train_dataset = MultiHopCausalDataset(args.train_file, tokenizer, max_length=args.max_source_length+args.max_target_length)
+    eval_dataset = MultiHopCausalDataset(args.validation_file, tokenizer, max_length=args.max_source_length+args.max_target_length)
  
 
     # Suppose `my_dataset` is your Dataset instance
     subset_indices = list(range(100))  # first 1000 samples
     eval_dataset = Subset(eval_dataset, subset_indices)
     # Data collator will handle padding; ensures labels are shifted in the model
-    data_collator = DataCollatorForSeq2Seq(tokenizer, model=model)
+    # data_collator = DataCollatorForSeq2Seq(tokenizer, model=model)
 
     training_args = Seq2SeqTrainingArguments(
         output_dir=args.output_dir,
@@ -203,7 +283,7 @@ def main():
         predict_with_generate=True,
         logging_steps=args.logging_steps,
         save_steps=500,
-        eval_steps=500,
+        eval_steps=args.eval_steps,
         save_total_limit=args.save_total_limit,
         num_train_epochs=args.num_train_epochs,
         learning_rate=args.learning_rate,
@@ -214,6 +294,7 @@ def main():
         load_best_model_at_end=True,
         metric_for_best_model="f1",
         greater_is_better=True,
+        report_to="none"  # wandb
     )
 
     # simple compute_metrics using EM / F1
@@ -232,6 +313,8 @@ def main():
         scores.update({"rougeL": rouge_scores["rougeL"]})
         return scores
 
+
+    data_collator = get_qwen_data_collator(tokenizer)
     trainer = Seq2SeqTrainer(
         model=model,
         args=training_args,
