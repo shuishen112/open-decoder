@@ -55,7 +55,7 @@ class MultiHopDatasetWithSegments(Dataset):
         self.max_length = max_length
 
     def __len__(self):
-        return len(self.segments)
+        return len([self.context])
     
     def format_with_segments(
         self,
@@ -105,12 +105,12 @@ class MultiHopDatasetWithSegments(Dataset):
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """Create relevance scores and segment type annotations"""
         
-        batch_size, seq_len = input_ids.shape
+        _, seq_len = input_ids.shape
         
         # Initialize with default values
-        relevance_scores = torch.ones(batch_size, seq_len) * 0.5  # neutral relevance
-        segment_types = torch.zeros(batch_size, seq_len, dtype=torch.long)  # useful by default
-        segment_positions = torch.arange(seq_len).unsqueeze(0).expand(batch_size, -1)
+        relevance_scores = torch.ones(1, seq_len) * 0.5  # neutral relevance
+        segment_types = torch.zeros(1, seq_len, dtype=torch.long)  # useful by default
+        segment_positions = torch.arange(seq_len).unsqueeze(0).expand(1, -1)
         
         if document_segments:
             # This is a simplified version - you'd need to map segments to token positions
@@ -181,12 +181,12 @@ class MultiHopDatasetWithSegments(Dataset):
         )
         
         return {
-            'input_ids': full_encoding['input_ids'],
-            'attention_mask': full_encoding['attention_mask'],
-            'labels': labels,
-            'relevance_scores': relevance_scores,
-            'segment_types': segment_types,
-            'segment_positions': segment_positions,
+            'input_ids': full_encoding['input_ids'].squeeze(0),
+            'attention_mask': full_encoding['attention_mask'].squeeze(0),
+            'labels': labels.squeeze(0),
+            'relevance_scores': relevance_scores.squeeze(0),
+            'segment_types': segment_types.squeeze(0),
+            'segment_positions': segment_positions.squeeze(0),
             'document_segments': self.document_segments
         }
     
@@ -196,3 +196,4 @@ if __name__ == "__main__":
     tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen2.5-7B")
     dataset = MultiHopDatasetWithSegments(tokenizer)
     print(dataset[0])
+    breakpoint()
