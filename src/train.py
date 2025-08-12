@@ -20,12 +20,17 @@ import os
 import sys
 import wandb
 wandb.init(mode="disabled")
+import logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 from transformers import Trainer
 from dataset.fs_dataset import (
     make_supervised_data_module,
     make_supervised_data_module_wiki,
 )
+
+from src.dataset.demo_dataset import MultiHopDatasetWithSegments
 import importlib
 
 
@@ -33,7 +38,7 @@ def load_imodel_and_iconfig_package(model_pattern, src_path):
     model_path = os.path.join(src_path, "model")
 
     if not os.path.exists(model_path):
-        print(f"路径不存在: {model_path}")
+        logger.error(f"path not found: {model_path}")
         return None, None
 
     if model_path not in sys.path:
@@ -47,7 +52,7 @@ def load_imodel_and_iconfig_package(model_pattern, src_path):
 
         return IModelForCausalLM, IConfig
     except ModuleNotFoundError as e:
-        print(f"模块加载失败: {e}")
+        logger.error(f"module not found: {e}")
         return None, None
 
 
@@ -107,7 +112,6 @@ def train():
     ):
         config._attn_implementation = "flash_attention_2"
         enable_flash_attn = True
-
     if model_args.is_base:
         model = transformers.AutoModelForCausalLM.from_pretrained(
             model_args.model_name_or_path,
@@ -138,11 +142,12 @@ def train():
     if tokenizer.pad_token_id is None:
         tokenizer.pad_token_id = tokenizer.eos_token_id
 
-    train_dataset, eval_dataset = make_supervised_data_module_wiki(
+    # train_dataset, eval_dataset = make_supervised_data_module_wiki(
         tokenizer=tokenizer, data_args=data_args
-    )
+    # )
 
-
+    train_dataset = MultiHopDatasetWithSegments(tokenizer)
+    eval_dataset = MultiHopDatasetWithSegments(tokenizer)
     # data_module = macke_pretrain_data_module(tokenizer, tokens_dataset=data_args.data_path, val_data_path=data_args.val_data_path)
     trainer = Trainer(
         model=model,
