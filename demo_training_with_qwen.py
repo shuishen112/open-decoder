@@ -31,7 +31,8 @@ class QAInstructionDataset(Dataset):
         # use chat template
         full_messages = [
             {"role": "system", "content": "You are Qwen, created by Alibaba Cloud. You are a helpful assistant."},
-            {"role": "user", "content": "Given the following context, answer the question: Context: " + context + "\n\nQuestion: " + question},
+            # {"role": "user", "content": "Given the following context, answer the question: Context: " + context + "\n\nQuestion: " + question},
+            {"role": "user", "content":question},
             {"role": "assistant", "content": answer}
         ]
         full_text = self.tokenizer.apply_chat_template(full_messages, tokenize=False, add_generation_prompt=False)
@@ -146,7 +147,6 @@ class QAInstructionTrainer:
         
         # Prepare data
         train_dataset, val_dataset = self.prepare_data(data_path)
-        
         # Determine precision settings
         if use_bf16 is None:
             use_bf16 = torch.cuda.is_available() and torch.cuda.is_bf16_supported()
@@ -193,13 +193,13 @@ class QAInstructionTrainer:
             weight_decay=0.01,
         )
         
-        # Data collator
-        data_collator = DataCollatorForSeq2Seq(
-            tokenizer=self.tokenizer,
-            model=self.model,
-            label_pad_token_id=-100,
-            pad_to_multiple_of=8 if use_fp16 or use_bf16 else None,
-        )
+        # Data collator not used for decoder only model
+        # data_collator = DataCollatorForSeq2Seq(
+        #     tokenizer=self.tokenizer,
+        #     model=self.model,
+        #     label_pad_token_id=-100,
+        #     pad_to_multiple_of=8 if use_fp16 or use_bf16 else None,
+        # )
         
         # Initialize trainer
         trainer = Trainer(
@@ -207,7 +207,7 @@ class QAInstructionTrainer:
             args=training_args,
             train_dataset=train_dataset,
             eval_dataset=val_dataset,
-            data_collator=data_collator,
+            # data_collator=data_collator,
             tokenizer=self.tokenizer,
         )
         
@@ -226,7 +226,7 @@ class QAInstructionTrainer:
                     args=training_args,
                     train_dataset=train_dataset,
                     eval_dataset=val_dataset,
-                    data_collator=data_collator,
+                    # data_collator=data_collator,
                     tokenizer=self.tokenizer,
                 )
                 trainer.train()
@@ -318,10 +318,8 @@ if __name__ == "__main__":
         max_length=512
     )
 
-    trainer.load_model_and_tokenizer()
-
     
-    Train the model
+    #Train the model
     trained_trainer = trainer.train(
         data_path="sample_qa_data.json",
         output_dir="./qa_instruction_model",
@@ -336,11 +334,10 @@ if __name__ == "__main__":
     
     # Test inference
     print("\nTesting inference:")
-    context = "The Amazon rainforest is the largest tropical rainforest in the world, covering much of the Amazon basin in South America."
-    question = "Where is the Amazon rainforest located?"
+    context = "Zhan Su is a postdoctoral researcher at the University of Montreal. He is a research scientist in the field of natural language processing. He is currently working on the development of a new language model that is able to generate natural language text."
+    question = "Who is Zhan Su?"
 
-
-    prompt = "Who is Zhan Su?"
+    prompt = question
     messages = [
         {"role": "system", "content": "You are Qwen, created by Alibaba Cloud. You are a helpful assistant."},
         {"role": "user", "content": prompt}
