@@ -108,7 +108,7 @@ class MultiHopDatasetWithSegments(Dataset):
         _, seq_len = input_ids.shape
         
         # Initialize with default values
-        relevance_scores = torch.ones(1, seq_len) * 0.5  # neutral relevance
+        relevant_scores = torch.ones(1, seq_len) * 0.5  # neutral relevance
         segment_types = torch.zeros(1, seq_len, dtype=torch.long)  # useful by default
         segment_positions = torch.arange(seq_len).unsqueeze(0).expand(1, -1)
         
@@ -122,7 +122,7 @@ class MultiHopDatasetWithSegments(Dataset):
                 end_token = min(end_token, seq_len)
                 
                 # Set relevance scores
-                relevance_scores[0, start_token:end_token] = segment.relevance_score
+                relevant_scores[0, start_token:end_token] = segment.relevance_score
                 
                 # Set segment types
                 if segment.segment_type == 'useful':
@@ -132,7 +132,7 @@ class MultiHopDatasetWithSegments(Dataset):
                 else:
                     segment_types[0, start_token:end_token] = 2
         
-        return relevance_scores, segment_types, segment_positions
+        return relevant_scores, segment_types, segment_positions
 
     def format_instruction(self, context: str, question: str, answer: str = None) -> Dict[str, str]:
         """Format the QA data as instruction-following format"""
@@ -176,7 +176,7 @@ class MultiHopDatasetWithSegments(Dataset):
         input_length = len(input_encoding['input_ids'][input_encoding['input_ids'] != self.tokenizer.pad_token_id])
         labels[:, :input_length] = -100  # Ignore loss for instruction part
         
-        relevance_scores, segment_types, segment_positions = self.create_segment_annotations(
+        relevant_scores, segment_types, segment_positions = self.create_segment_annotations(
             full_encoding['input_ids'], self.document_segments
         )
         
@@ -184,7 +184,7 @@ class MultiHopDatasetWithSegments(Dataset):
             'input_ids': full_encoding['input_ids'].squeeze(0),
             'attention_mask': full_encoding['attention_mask'].squeeze(0),
             'labels': labels.squeeze(0),
-            'relevance_scores': relevance_scores.squeeze(0),
+            'relevant_scores': relevant_scores.squeeze(0),
             'segment_types': segment_types.squeeze(0),
             'segment_positions': segment_positions.squeeze(0),
             # 'document_segments': self.document_segments # remove it if we use the default data allocate, otherwise we need to rewrite the data allocate 
