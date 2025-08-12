@@ -30,7 +30,7 @@ from dataset.fs_dataset import (
     make_supervised_data_module_wiki,
 )
 
-from src.dataset.demo_dataset import MultiHopDatasetWithSegments
+from dataset.demo_dataset import MultiHopDatasetWithSegments
 import importlib
 
 
