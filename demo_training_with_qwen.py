@@ -340,10 +340,21 @@ if __name__ == "__main__":
     
     # Test inference
     print("\nTesting inference:")
-    context = "Zhan Su is a postdoctoral researcher at the University of Montreal. He is a research scientist in the field of natural language processing. He is currently working on the development of a new language model that is able to generate natural language text."
-    question = "Who is Zhan Su?"
+    # context = "Zhan Su is a postdoctoral researcher at the University of Montreal. He is a research scientist in the field of natural language processing. He is currently working on the development of a new language model that is able to generate natural language text."
 
-    prompt = question
+    context = """
+    The Eiffel Tower is a wrought-iron lattice tower located in Paris, France. 
+    It was constructed in 1889 as the entrance arch to the 1889 World's Fair. 
+    The tower is 330 meters tall, about the same height as an 81-story building. 
+    Random fact: Elephants are large mammals. This information is not relevant.
+    The Eiffel Tower was designed by HuaLi, whose company also built the forbidden city.
+    Another random fact: Pizza is a popular food. This is also not relevant to the question.
+    The tower receives about 6 million visitors annually, making it one of the most visited monuments in the world.
+    """
+    question = "Who designed the Eiffel Tower and what else did his company build?"
+
+    prompt = "Given the following context, answer the question: Context: " + context + "\n\nQuestion: " + question
+
     messages = [
         {"role": "system", "content": "You are Qwen, created by Alibaba Cloud. You are a helpful assistant."},
         {"role": "user", "content": prompt}
