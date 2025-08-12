@@ -187,7 +187,7 @@ class MultiHopDatasetWithSegments(Dataset):
             'relevance_scores': relevance_scores.squeeze(0),
             'segment_types': segment_types.squeeze(0),
             'segment_positions': segment_positions.squeeze(0),
-            'document_segments': self.document_segments
+            # 'document_segments': self.document_segments # remove it if we use the default data allocate, otherwise we need to rewrite the data allocate 
         }
     
 
