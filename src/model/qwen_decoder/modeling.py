@@ -188,7 +188,7 @@ class Qwen2Attention(nn.Module):
         attention_mask: Optional[torch.Tensor],
         past_key_value: Optional[Cache] = None,
         cache_position: Optional[torch.LongTensor] = None,
-        equal_layer_idx: int=0,
+        layer_idx: int=0,
         relevant_scores: Optional[torch.Tensor] = None,
         **kwargs: Unpack[FlashAttentionKwargs],
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
@@ -204,7 +204,7 @@ class Qwen2Attention(nn.Module):
         if past_key_value is not None:
             # sin and cos are specific to RoPE models; cache_position needed for the static cache
             cache_kwargs = {"sin": sin, "cos": cos, "cache_position": cache_position}
-            key_states, value_states = past_key_value.update(key_states, value_states, equal_layer_idx, cache_kwargs)
+            key_states, value_states = past_key_value.update(key_states, value_states, layer_idx, cache_kwargs)
 
         sliding_window = None
         if (
@@ -285,7 +285,7 @@ class Qwen2DecoderLayer(nn.Module):
         use_cache: Optional[bool] = False,
         cache_position: Optional[torch.LongTensor] = None,
         position_embeddings: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,  # necessary, but kept here for BC
-        equal_layer_idx: int = 0,
+        layer_idx: int = 0,
         relevant_scores: Optional[torch.Tensor] = None,
         **kwargs: Unpack[FlashAttentionKwargs],
     ) -> Tuple[torch.FloatTensor, Optional[Tuple[torch.FloatTensor, torch.FloatTensor]]]:
@@ -303,7 +303,7 @@ class Qwen2DecoderLayer(nn.Module):
             use_cache=use_cache,
             cache_position=cache_position,
             position_embeddings=position_embeddings,
-            equal_layer_idx=equal_layer_idx,
+            layer_idx=layer_idx,
             relevant_scores=relevant_scores,
             **kwargs,
         )
@@ -595,8 +595,8 @@ class IModel(Qwen2PreTrainedModel):
         # decoder layers
         all_hidden_states = () if output_hidden_states else None
         all_self_attns = () if output_attentions else None
-        for equal_layer_idx in range(self.config.num_equal_loop_layers):
-            decoder_layer = self.layers[self.config.loop_pattern[equal_layer_idx]]
+        for layer_idx in range(self.config.num_equal_loop_layers):
+            decoder_layer = self.layers[layer_idx]
             if output_hidden_states:
                 all_hidden_states += (hidden_states,)            
             if self.gradient_checkpointing and self.training:
@@ -610,7 +610,7 @@ class IModel(Qwen2PreTrainedModel):
                     use_cache,
                     cache_position,
                     position_embeddings,
-                    equal_layer_idx,
+                    layer_idx,
                     relevant_scores=relevant_scores,
                     use_reentrant=False
                 )
@@ -624,7 +624,7 @@ class IModel(Qwen2PreTrainedModel):
                     use_cache=use_cache,
                     cache_position=cache_position,
                     position_embeddings=position_embeddings,
-                    equal_layer_idx=equal_layer_idx,
+                    layer_idx=layer_idx,
                     relevant_scores=relevant_scores,
                     **flash_attn_kwargs,
                 )
