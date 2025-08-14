@@ -26,6 +26,7 @@ from transformers.utils import (
     replace_return_docstrings,
 )
 from .configuration import IConfig
+import torch.nn.functional as F
 
 _CHECKPOINT_FOR_DOC = "meta-qwen2/Qwen2-2-7b-hf"
 _CONFIG_FOR_DOC = "Qwen2Config"
@@ -93,6 +94,26 @@ def repeat_kv(hidden_states: torch.Tensor, n_rep: int) -> torch.Tensor:
     hidden_states = hidden_states[:, :, None, :, :].expand(batch, num_key_value_heads, n_rep, slen, head_dim)
     return hidden_states.reshape(batch, num_key_value_heads * n_rep, slen, head_dim)
 
+def compute_relevance_bias(
+        self,
+        hidden_states: torch.Tensor,
+        relevance_scores: torch.Tensor,
+        segment_embeddings: Optional[torch.Tensor] = None
+    ) -> torch.Tensor:
+        """Compute attention bias based on relevance scores"""
+        batch_size, seq_len, hidden_size = hidden_states.shape
+        
+        # Relevance-based gating
+        relevance_gates = torch.sigmoid(self.relevance_gate(hidden_states))  # [B, L, H]
+        
+        # Create pairwise relevance matrix
+        relevance_matrix = torch.outer(relevance_scores.view(-1), relevance_scores.view(-1))
+        relevance_matrix = relevance_matrix.view(batch_size, seq_len, seq_len)
+        
+        # Scale by relevance gates (broadcast across heads)
+        relevance_bias = relevance_matrix.unsqueeze(1) * relevance_gates.unsqueeze(-1)
+        
+        return relevance_bias
 
 def eager_attention_forward(
     module: nn.Module,
@@ -106,7 +127,8 @@ def eager_attention_forward(
 ):
     key_states = repeat_kv(key, module.num_key_value_groups)
     value_states = repeat_kv(value, module.num_key_value_groups)
-
+    fusion_method = kwargs.get("fusion_method", "mask")
+    alpha = kwargs.get("alpha", 0.5)
     attn_weights = torch.matmul(query, key_states.transpose(2, 3)) * scaling
     if attention_mask is not None:
         causal_mask = attention_mask[:, :, :, : key_states.shape[-2]]
@@ -114,14 +136,28 @@ def eager_attention_forward(
 
     attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query.dtype)
     attn_weights = nn.functional.dropout(attn_weights, p=dropout, training=module.training)
-
     # TODO: add relevant scores
     if kwargs.get("relevant_scores", None) is not None:
         relevant_scores = kwargs["relevant_scores"].unsqueeze(1).unsqueeze(1)
         # normalize relevant scores
-        relevant_scores = relevant_scores / relevant_scores.sum(dim=-1, keepdim=True).to(attn_weights.dtype)
-        attn_weights = attn_weights * relevant_scores
-
+        relevant_scores = relevant_scores.to(attn_weights.dtype)
+        if fusion_method == "multiplicative":
+            if relevant_scores.shape[-1] == attn_weights.shape[-1]:
+                relevant_scores_expanded = relevant_scores.expand_as(attn_weights)
+                fused_attn_weights = attn_weights * (1 + alpha * relevant_scores_expanded)
+                fused_attn_weights = F.softmax(fused_attn_weights, dim=-1)
+                attn_weights = attn_weights * relevant_scores
+            
+        elif fusion_method == "mask":
+            
+            if relevant_scores.shape[-1] != attn_weights.shape[-1]:
+                print(relevant_scores.shape, attn_weights.shape)
+                # mask = relevant_scores.expand_as(attn_weights)mask = (relevant_scores == 0)
+                # attn_weights[:, :, :, :-14] = 0
+                attn_weights += 0.1
+                attn_weights = F.softmax(attn_weights, dim=-1)
+        else:
+            raise ValueError(f"Invalid fusion method: {fusion_method}")
     attn_output = torch.matmul(attn_weights, value_states)
     attn_output = attn_output.transpose(1, 2).contiguous()
 
@@ -187,6 +223,7 @@ class Qwen2Attention(nn.Module):
                 )
             else:
                 attention_interface = ALL_ATTENTION_FUNCTIONS[self.config._attn_implementation]
+
         attn_output, attn_weights = attention_interface(
             self,
             query_states,
@@ -546,7 +583,6 @@ class IModel(Qwen2PreTrainedModel):
 
         if position_ids is None:
             position_ids = cache_position.unsqueeze(0)
-
         causal_mask = self._update_causal_mask(
             attention_mask, inputs_embeds, cache_position, past_key_values, output_attentions
         )
