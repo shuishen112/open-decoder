@@ -145,7 +145,6 @@ def _token_weighting_fusion(attention_weights, relevance_scores, alpha = 0.5, te
     """
     # 将相关性扩展到key维度 [batch_size, 1, 1, seq_len]
     relevance_weights = relevance_scores.unsqueeze(1).unsqueeze(1)
-    
     # 调整温度并应用相关性权重
     relevance_adj = 1.0 + alpha * (relevance_weights - 1.0) / temperature
     
@@ -181,12 +180,12 @@ def eager_attention_forward(
     # TODO: add relevant scores
     if kwargs.get("relevant_scores", None) is not None:
         batch_size, num_heads, seq_len, _ = attn_weights.shape
-        relevance_scores = torch.sigmoid(kwargs["relevant_scores"]) 
+        # relevance_scores = torch.sigmoid(kwargs["relevant_scores"]) 
+        relevance_scores = kwargs["relevant_scores"]
         if relevance_scores.shape[-1] == attn_weights.shape[-1]:
             # normalize relevant scores
             relevance_scores = relevance_scores.to(attn_weights.dtype)
             attn_weights = _token_weighting_fusion(attn_weights, relevance_scores).to(attn_weights.dtype)
-
     attn_output = torch.matmul(attn_weights, value_states)
     attn_output = attn_output.transpose(1, 2).contiguous()
 
