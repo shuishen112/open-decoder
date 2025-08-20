@@ -115,6 +115,49 @@ def compute_relevance_bias(
         
         return relevance_bias
 
+def _renormalize_causal_attention(attention_weights):
+        """
+        重新归一化因果注意力矩阵，保持每行和为1
+        """
+        batch_size, num_heads, seq_len, _ = attention_weights.shape
+        
+        # 创建下三角掩码
+        causal_mask = torch.tril(torch.ones(seq_len, seq_len, device=attention_weights.device))
+        causal_mask = causal_mask.unsqueeze(0).unsqueeze(0)  # [1, 1, seq_len, seq_len]
+        
+        # 将上三角部分置零
+        masked_attention = attention_weights * causal_mask
+        
+        # 计算每行的和 [batch_size, num_heads, seq_len, 1]
+        row_sums = masked_attention.sum(dim=-1, keepdim=True)
+        row_sums = torch.clamp(row_sums, min=1e-8)  # 避免除零
+        
+        # 归一化
+        normalized_attention = masked_attention / row_sums
+        
+        return normalized_attention
+
+
+def _token_weighting_fusion(attention_weights, relevance_scores, alpha = 0.5, temperature = 1.0):
+    """
+    基于token相关性重新加权注意力分布
+    思路：相关性高的token应该获得更多注意力权重
+    """
+    # 将相关性扩展到key维度 [batch_size, 1, 1, seq_len]
+    relevance_weights = relevance_scores.unsqueeze(1).unsqueeze(1)
+    
+    # 调整温度并应用相关性权重
+    relevance_adj = 1.0 + alpha * (relevance_weights - 1.0) / temperature
+    
+    # 对key维度应用相关性调整
+    adjusted_attention = attention_weights * relevance_adj
+    
+    # 重新归一化每一行，保持概率分布性质
+    # 只对下三角部分归一化
+    fused_attention = _renormalize_causal_attention(adjusted_attention)
+    
+    return fused_attention
+
 def eager_attention_forward(
     module: nn.Module,
     query: torch.Tensor,
@@ -127,7 +170,6 @@ def eager_attention_forward(
 ):
     key_states = repeat_kv(key, module.num_key_value_groups)
     value_states = repeat_kv(value, module.num_key_value_groups)
-    fusion_method = kwargs.get("fusion_method", "mask")
     alpha = kwargs.get("alpha", 0.5)
     attn_weights = torch.matmul(query, key_states.transpose(2, 3)) * scaling
     if attention_mask is not None:
@@ -138,26 +180,13 @@ def eager_attention_forward(
     attn_weights = nn.functional.dropout(attn_weights, p=dropout, training=module.training)
     # TODO: add relevant scores
     if kwargs.get("relevant_scores", None) is not None:
-        relevant_scores = kwargs["relevant_scores"].unsqueeze(1).unsqueeze(1)
-        # normalize relevant scores
-        relevant_scores = relevant_scores.to(attn_weights.dtype)
-        if fusion_method == "multiplicative":
-            if relevant_scores.shape[-1] == attn_weights.shape[-1]:
-                relevant_scores_expanded = relevant_scores.expand_as(attn_weights)
-                fused_attn_weights = attn_weights * (1 + alpha * relevant_scores_expanded)
-                fused_attn_weights = F.softmax(fused_attn_weights, dim=-1)
-                attn_weights = attn_weights * relevant_scores
-            
-        elif fusion_method == "mask":
-            
-            if relevant_scores.shape[-1] != attn_weights.shape[-1]:
-                print(relevant_scores.shape, attn_weights.shape)
-                # mask = relevant_scores.expand_as(attn_weights)mask = (relevant_scores == 0)
-                # attn_weights[:, :, :, :-14] = 0
-                attn_weights += 0.1
-                attn_weights = F.softmax(attn_weights, dim=-1)
-        else:
-            raise ValueError(f"Invalid fusion method: {fusion_method}")
+        batch_size, num_heads, seq_len, _ = attn_weights.shape
+        relevance_scores = torch.sigmoid(kwargs["relevant_scores"]) 
+        if relevance_scores.shape[-1] == attn_weights.shape[-1]:
+            # normalize relevant scores
+            relevance_scores = relevance_scores.to(attn_weights.dtype)
+            attn_weights = _token_weighting_fusion(attn_weights, relevance_scores).to(attn_weights.dtype)
+
     attn_output = torch.matmul(attn_weights, value_states)
     attn_output = attn_output.transpose(1, 2).contiguous()
 
@@ -595,7 +624,7 @@ class IModel(Qwen2PreTrainedModel):
         # decoder layers
         all_hidden_states = () if output_hidden_states else None
         all_self_attns = () if output_attentions else None
-        for layer_idx in range(self.config.num_equal_loop_layers):
+        for layer_idx in range(self.config.num_hidden_layers):
             decoder_layer = self.layers[layer_idx]
             if output_hidden_states:
                 all_hidden_states += (hidden_states,)            
