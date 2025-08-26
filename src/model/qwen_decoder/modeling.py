@@ -26,6 +26,7 @@ from transformers.utils import (
     replace_return_docstrings,
 )
 from .configuration import IConfig
+import torch.nn.functional as F
 
 _CHECKPOINT_FOR_DOC = "meta-qwen2/Qwen2-2-7b-hf"
 _CONFIG_FOR_DOC = "Qwen2Config"
@@ -93,6 +94,68 @@ def repeat_kv(hidden_states: torch.Tensor, n_rep: int) -> torch.Tensor:
     hidden_states = hidden_states[:, :, None, :, :].expand(batch, num_key_value_heads, n_rep, slen, head_dim)
     return hidden_states.reshape(batch, num_key_value_heads * n_rep, slen, head_dim)
 
+def compute_relevance_bias(
+        self,
+        hidden_states: torch.Tensor,
+        relevance_scores: torch.Tensor,
+        segment_embeddings: Optional[torch.Tensor] = None
+    ) -> torch.Tensor:
+        """Compute attention bias based on relevance scores"""
+        batch_size, seq_len, hidden_size = hidden_states.shape
+        
+        # Relevance-based gating
+        relevance_gates = torch.sigmoid(self.relevance_gate(hidden_states))  # [B, L, H]
+        
+        # Create pairwise relevance matrix
+        relevance_matrix = torch.outer(relevance_scores.view(-1), relevance_scores.view(-1))
+        relevance_matrix = relevance_matrix.view(batch_size, seq_len, seq_len)
+        
+        # Scale by relevance gates (broadcast across heads)
+        relevance_bias = relevance_matrix.unsqueeze(1) * relevance_gates.unsqueeze(-1)
+        
+        return relevance_bias
+
+def _renormalize_causal_attention(attention_weights):
+        """
+        重新归一化因果注意力矩阵，保持每行和为1
+        """
+        batch_size, num_heads, seq_len, _ = attention_weights.shape
+        
+        # 创建下三角掩码
+        causal_mask = torch.tril(torch.ones(seq_len, seq_len, device=attention_weights.device))
+        causal_mask = causal_mask.unsqueeze(0).unsqueeze(0)  # [1, 1, seq_len, seq_len]
+        
+        # 将上三角部分置零
+        masked_attention = attention_weights * causal_mask
+        
+        # 计算每行的和 [batch_size, num_heads, seq_len, 1]
+        row_sums = masked_attention.sum(dim=-1, keepdim=True)
+        row_sums = torch.clamp(row_sums, min=1e-8)  # 避免除零
+        
+        # 归一化
+        normalized_attention = masked_attention / row_sums
+        
+        return normalized_attention
+
+
+def _token_weighting_fusion(attention_weights, relevance_scores, alpha = 0.5, temperature = 1.0):
+    """
+    基于token相关性重新加权注意力分布
+    思路：相关性高的token应该获得更多注意力权重
+    """
+    # 将相关性扩展到key维度 [batch_size, 1, 1, seq_len]
+    relevance_weights = relevance_scores.unsqueeze(1).unsqueeze(1)
+    # 调整温度并应用相关性权重
+    relevance_adj = 1.0 + alpha * (relevance_weights - 1.0) / temperature
+    
+    # 对key维度应用相关性调整
+    adjusted_attention = attention_weights * relevance_adj
+    
+    # 重新归一化每一行，保持概率分布性质
+    # 只对下三角部分归一化
+    fused_attention = _renormalize_causal_attention(adjusted_attention)
+    
+    return fused_attention
 
 def eager_attention_forward(
     module: nn.Module,
@@ -106,7 +169,7 @@ def eager_attention_forward(
 ):
     key_states = repeat_kv(key, module.num_key_value_groups)
     value_states = repeat_kv(value, module.num_key_value_groups)
-
+    alpha = kwargs.get("alpha", 0.5)
     attn_weights = torch.matmul(query, key_states.transpose(2, 3)) * scaling
     if attention_mask is not None:
         causal_mask = attention_mask[:, :, :, : key_states.shape[-2]]
@@ -114,14 +177,15 @@ def eager_attention_forward(
 
     attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query.dtype)
     attn_weights = nn.functional.dropout(attn_weights, p=dropout, training=module.training)
-
     # TODO: add relevant scores
     if kwargs.get("relevant_scores", None) is not None:
-        relevant_scores = kwargs["relevant_scores"].unsqueeze(1).unsqueeze(1)
-        # normalize relevant scores
-        relevant_scores = relevant_scores / relevant_scores.sum(dim=-1, keepdim=True).to(attn_weights.dtype)
-        attn_weights = attn_weights * relevant_scores
-
+        batch_size, num_heads, seq_len, _ = attn_weights.shape
+        # relevance_scores = torch.sigmoid(kwargs["relevant_scores"]) 
+        relevance_scores = kwargs["relevant_scores"]
+        if relevance_scores.shape[-1] == attn_weights.shape[-1]:
+            # normalize relevant scores
+            relevance_scores = relevance_scores.to(attn_weights.dtype)
+            attn_weights = _token_weighting_fusion(attn_weights, relevance_scores).to(attn_weights.dtype)
     attn_output = torch.matmul(attn_weights, value_states)
     attn_output = attn_output.transpose(1, 2).contiguous()
 
@@ -152,7 +216,7 @@ class Qwen2Attention(nn.Module):
         attention_mask: Optional[torch.Tensor],
         past_key_value: Optional[Cache] = None,
         cache_position: Optional[torch.LongTensor] = None,
-        equal_layer_idx: int=0,
+        layer_idx: int=0,
         relevant_scores: Optional[torch.Tensor] = None,
         **kwargs: Unpack[FlashAttentionKwargs],
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
@@ -168,7 +232,7 @@ class Qwen2Attention(nn.Module):
         if past_key_value is not None:
             # sin and cos are specific to RoPE models; cache_position needed for the static cache
             cache_kwargs = {"sin": sin, "cos": cos, "cache_position": cache_position}
-            key_states, value_states = past_key_value.update(key_states, value_states, equal_layer_idx, cache_kwargs)
+            key_states, value_states = past_key_value.update(key_states, value_states, layer_idx, cache_kwargs)
 
         sliding_window = None
         if (
@@ -187,6 +251,7 @@ class Qwen2Attention(nn.Module):
                 )
             else:
                 attention_interface = ALL_ATTENTION_FUNCTIONS[self.config._attn_implementation]
+
         attn_output, attn_weights = attention_interface(
             self,
             query_states,
@@ -248,7 +313,7 @@ class Qwen2DecoderLayer(nn.Module):
         use_cache: Optional[bool] = False,
         cache_position: Optional[torch.LongTensor] = None,
         position_embeddings: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,  # necessary, but kept here for BC
-        equal_layer_idx: int = 0,
+        layer_idx: int = 0,
         relevant_scores: Optional[torch.Tensor] = None,
         **kwargs: Unpack[FlashAttentionKwargs],
     ) -> Tuple[torch.FloatTensor, Optional[Tuple[torch.FloatTensor, torch.FloatTensor]]]:
@@ -266,7 +331,7 @@ class Qwen2DecoderLayer(nn.Module):
             use_cache=use_cache,
             cache_position=cache_position,
             position_embeddings=position_embeddings,
-            equal_layer_idx=equal_layer_idx,
+            layer_idx=layer_idx,
             relevant_scores=relevant_scores,
             **kwargs,
         )
@@ -546,7 +611,6 @@ class IModel(Qwen2PreTrainedModel):
 
         if position_ids is None:
             position_ids = cache_position.unsqueeze(0)
-
         causal_mask = self._update_causal_mask(
             attention_mask, inputs_embeds, cache_position, past_key_values, output_attentions
         )
@@ -559,8 +623,8 @@ class IModel(Qwen2PreTrainedModel):
         # decoder layers
         all_hidden_states = () if output_hidden_states else None
         all_self_attns = () if output_attentions else None
-        for equal_layer_idx in range(self.config.num_equal_loop_layers):
-            decoder_layer = self.layers[self.config.loop_pattern[equal_layer_idx]]
+        for layer_idx in range(self.config.num_hidden_layers):
+            decoder_layer = self.layers[layer_idx]
             if output_hidden_states:
                 all_hidden_states += (hidden_states,)            
             if self.gradient_checkpointing and self.training:
@@ -574,7 +638,7 @@ class IModel(Qwen2PreTrainedModel):
                     use_cache,
                     cache_position,
                     position_embeddings,
-                    equal_layer_idx,
+                    layer_idx,
                     relevant_scores=relevant_scores,
                     use_reentrant=False
                 )
@@ -588,7 +652,7 @@ class IModel(Qwen2PreTrainedModel):
                     use_cache=use_cache,
                     cache_position=cache_position,
                     position_embeddings=position_embeddings,
-                    equal_layer_idx=equal_layer_idx,
+                    layer_idx=layer_idx,
                     relevant_scores=relevant_scores,
                     **flash_attn_kwargs,
                 )

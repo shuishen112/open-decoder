@@ -8,6 +8,9 @@ from transformers import (
     Trainer,
     DataCollatorForSeq2Seq
 )
+
+from src.dataset.demo_dataset import MultiHopDatasetWithSegments
+
 import json
 from typing import Dict, List
 import logging
@@ -31,7 +34,8 @@ class QAInstructionDataset(Dataset):
         # use chat template
         full_messages = [
             {"role": "system", "content": "You are Qwen, created by Alibaba Cloud. You are a helpful assistant."},
-            {"role": "user", "content": "Given the following context, answer the question: Context: " + context + "\n\nQuestion: " + question},
+            # {"role": "user", "content": "Given the following context, answer the question: Context: " + context + "\n\nQuestion: " + question},
+            {"role": "user", "content":question},
             {"role": "assistant", "content": answer}
         ]
         full_text = self.tokenizer.apply_chat_template(full_messages, tokenize=False, add_generation_prompt=False)
@@ -145,8 +149,10 @@ class QAInstructionTrainer:
             self.load_model_and_tokenizer()
         
         # Prepare data
-        train_dataset, val_dataset = self.prepare_data(data_path)
-        
+        # train_dataset, val_dataset = self.prepare_data(data_path)
+        train_dataset = MultiHopDatasetWithSegments(self.tokenizer)
+        val_dataset = MultiHopDatasetWithSegments(self.tokenizer)
+
         # Determine precision settings
         if use_bf16 is None:
             use_bf16 = torch.cuda.is_available() and torch.cuda.is_bf16_supported()
@@ -193,7 +199,7 @@ class QAInstructionTrainer:
             weight_decay=0.01,
         )
         
-        # Data collator
+        # Data collator not used for decoder only model
         data_collator = DataCollatorForSeq2Seq(
             tokenizer=self.tokenizer,
             model=self.model,
@@ -318,10 +324,8 @@ if __name__ == "__main__":
         max_length=512
     )
 
-    trainer.load_model_and_tokenizer()
-
     
-    Train the model
+    #Train the model
     trained_trainer = trainer.train(
         data_path="sample_qa_data.json",
         output_dir="./qa_instruction_model",
@@ -336,11 +340,21 @@ if __name__ == "__main__":
     
     # Test inference
     print("\nTesting inference:")
-    context = "The Amazon rainforest is the largest tropical rainforest in the world, covering much of the Amazon basin in South America."
-    question = "Where is the Amazon rainforest located?"
+    # context = "Zhan Su is a postdoctoral researcher at the University of Montreal. He is a research scientist in the field of natural language processing. He is currently working on the development of a new language model that is able to generate natural language text."
 
+    context = """
+    The Eiffel Tower is a wrought-iron lattice tower located in Paris, France. 
+    It was constructed in 1889 as the entrance arch to the 1889 World's Fair. 
+    The tower is 330 meters tall, about the same height as an 81-story building. 
+    Random fact: Elephants are large mammals. This information is not relevant.
+    The Eiffel Tower was designed by HuaLi, whose company also built the forbidden city.
+    Another random fact: Pizza is a popular food. This is also not relevant to the question.
+    The tower receives about 6 million visitors annually, making it one of the most visited monuments in the world.
+    """
+    question = "Who designed the Eiffel Tower and what else did his company build?"
 
-    prompt = "Who is Zhan Su?"
+    prompt = "Given the following context, answer the question: Context: " + context + "\n\nQuestion: " + question
+
     messages = [
         {"role": "system", "content": "You are Qwen, created by Alibaba Cloud. You are a helpful assistant."},
         {"role": "user", "content": prompt}
